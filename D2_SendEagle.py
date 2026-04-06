@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import numpy as np
 from typing import Dict, Optional, Literal
 
@@ -189,12 +190,25 @@ class D2_SendEagle:
             img, params, gen_info, formated_info
         )
 
-        # WSL2パスをWindowsパスに変換
-        # /workspace/ComfyUI/output/... -> \\wsl.localhost\Ubuntu\workspace\ComfyUI\output\...
-        win_path = file_full_path.replace(
-            "/workspace", r"\\wsl.localhost\Ubuntu\workspace"
-        )
-        win_path = win_path.replace("/", "\\")
+        # ブリッジディレクトリの定義と作成
+        bridge_dir_wsl = "/mnt/c/Users/munde/EagleBridge"
+        os.makedirs(bridge_dir_wsl, exist_ok=True)
+
+        # 新しいファイルをコピーする前に、前回の古い一時ファイルを一掃する
+        for f in os.listdir(bridge_dir_wsl):
+            old_file = os.path.join(bridge_dir_wsl, f)
+            try:
+                if os.path.isfile(old_file):
+                    os.remove(old_file)
+            except Exception:
+                pass
+
+        # 画像をブリッジディレクトリにコピー
+        bridge_file_wsl = os.path.join(bridge_dir_wsl, file_name)
+        shutil.copy2(file_full_path, bridge_file_wsl)
+
+        # Eagle API用のWindowsパスを構築
+        win_path = r"C:\Users\munde\EagleBridge" + "\\" + file_name
 
         # Eagleフォルダが指定されているならフォルダIDを取得
         folder_id = self.eagle_api.find_or_create_folder(params["eagle_folder"])
@@ -210,7 +224,7 @@ class D2_SendEagle:
         # タグを取得
         item["tags"] = self.get_tags(params, gen_info)
 
-        _ret = self.eagle_api.add_item_from_path(data=item, folder_id=folder_id)
+        self.eagle_api.add_item_from_path(data=item, folder_id=folder_id)
 
         return {
             "filename": file_name,
