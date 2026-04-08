@@ -2,6 +2,9 @@ import json
 import os
 import shutil
 import numpy as np
+import yaml
+import subprocess
+from pathlib import Path
 from typing import Dict, Optional, Literal
 
 from PIL import Image
@@ -11,10 +14,10 @@ from datetime import datetime
 import folder_paths
 
 from .modules.util import util
-from .modules.eagle_api import EagleAPI
 from .modules.params_extractor import ParamsExtractor
+from .modules.eagle_api import EagleAPI
 
-from .my_types import TNodeParams, TGenInfo, D2_TD2Pipe
+from .my_types import TNodeParams, TGenInfo, D2_TD2Pipe, TConfig
 
 FORCE_WRITE_PROMPT = False
 
@@ -25,7 +28,70 @@ class D2_SendEagle:
         self.type = "output"
         self.output_folder = ""
         self.subfolder_name = ""
-        self.eagle_api: EagleAPI = EagleAPI()
+        self.eagle_api = EagleAPI()
+        self.config = self._load_config()
+
+    # #########################
+    # 設定ファイルを読み込む
+    def _load_config(self) -> TConfig:
+        """config.yaml または config.org.yaml を読み込む"""
+        base_dir = Path(__file__).resolve().parent
+        config_file = base_dir / "config.yaml"
+        config_org = base_dir / "config.org.yaml"
+
+        # ユーザー設定がなければオリジナル設定をコピーする
+        if not os.path.exists(config_file):
+            shutil.copy2(config_org, config_file)
+
+        with open(config_file, "r", encoding="utf-8") as file:
+            return yaml.safe_load(file)
+
+    # #########################
+    # ブリッジディレクトリの (WSLパス, Windowsパス) を取得
+    def _resolve_bridge_dir(self) -> tuple[str, str]:
+        """ブリッジディレクトリの (WSLパス, Windowsパス) を返す。
+
+        優先順位:
+        1. 環境変数 EAGLE_BRIDGE_DIR (WSLパスで指定)
+        2. config.yaml の bridge_dir
+        3. wslpath で $USERPROFILE/EagleBridge を自動変換
+        4. フォールバック: /tmp/EagleBridge (Windowsパスなし)
+        """
+        # 1. 環境変数から取得
+        env_path = os.environ.get("EAGLE_BRIDGE_DIR", "")
+        if env_path:
+            win_path = util.to_windows_path(env_path)
+            if win_path:
+                return env_path, win_path
+
+        # 2. config.yaml から取得
+        config_bridge_dir = self.config.get("bridge_dir", "")
+        if config_bridge_dir:
+            win_path = util.to_windows_path(config_bridge_dir)
+            if win_path:
+                return config_bridge_dir, win_path
+
+        # 3. wslpath で $USERPROFILE/EagleBridge を自動変換
+        try:
+            userprofile = os.environ.get("USERPROFILE", "")
+            if userprofile:
+                result = subprocess.run(
+                    ["wslpath", "-u", userprofile],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                userprofile_wsl = result.stdout.strip()
+                if userprofile_wsl:
+                    wsl_path = f"{userprofile_wsl}/EagleBridge"
+                    win_path = util.to_windows_path(wsl_path)
+                    if win_path:
+                        return wsl_path, win_path
+        except Exception:
+            pass
+
+        # 4. フォールバック
+        return "/tmp/EagleBridge", ""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -118,7 +184,8 @@ class D2_SendEagle:
     ):
         self.output_folder, self.subfolder_name = self.get_output_folder()
 
-        results = list()
+        image_results = list()
+        eagle_payloads = list()
         params = TNodeParams(
             format=format,
             lossless_webp=lossless_webp,
@@ -134,11 +201,13 @@ class D2_SendEagle:
         )
 
         for image in images:
-            results.append(self.create_image_object(image, params, d2_pipe))
+            img_result, eagle_payload = self.create_image_object(image, params, d2_pipe)
+            image_results.append(img_result)
+            eagle_payloads.append(eagle_payload)
 
         if preview:
             return {
-                "ui": {"images": results},
+                "ui": {"images": image_results, "d2_send_eagle": eagle_payloads},
                 "result": (
                     params["positive"],
                     params["negative"],
@@ -147,11 +216,12 @@ class D2_SendEagle:
             }
 
         return {
+            "ui": {"d2_send_eagle": eagle_payloads},
             "result": (
                 params["positive"],
                 params["negative"],
                 images,
-            )
+            ),
         }
 
     @classmethod
@@ -171,7 +241,7 @@ class D2_SendEagle:
     # イメージオブジェクトを作成
     def create_image_object(
         self, image, params: TNodeParams, d2_pipe: D2_TD2Pipe | None
-    ) -> dict:
+    ) -> tuple[dict, dict]:
         normalized_pixels = 255.0 * image.cpu().numpy()
         img = Image.fromarray(np.clip(normalized_pixels, 0, 255).astype(np.uint8))
 
@@ -190,47 +260,54 @@ class D2_SendEagle:
             img, params, gen_info, formated_info
         )
 
-        # ブリッジディレクトリの定義と作成
-        bridge_dir_wsl = "/mnt/c/Users/munde/EagleBridge"
-        os.makedirs(bridge_dir_wsl, exist_ok=True)
+        # ブリッジディレクトリの取得（動的解決）
+        bridge_wsl, bridge_win = self._resolve_bridge_dir()
+        os.makedirs(bridge_wsl, exist_ok=True)
 
-        # 新しいファイルをコピーする前に、前回の古い一時ファイルを一掃する
-        for f in os.listdir(bridge_dir_wsl):
-            old_file = os.path.join(bridge_dir_wsl, f)
-            try:
-                if os.path.isfile(old_file):
-                    os.remove(old_file)
-            except Exception:
-                pass
+        # ブリッジディレクトリの事前クリーンアップ
+        try:
+            for old_file in os.listdir(bridge_wsl):
+                try:
+                    os.remove(os.path.join(bridge_wsl, old_file))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-        # 画像をブリッジディレクトリにコピー
-        bridge_file_wsl = os.path.join(bridge_dir_wsl, file_name)
-        shutil.copy2(file_full_path, bridge_file_wsl)
+        # ファイルをブリッジディレクトリにコピー
+        shutil.copy2(file_full_path, os.path.join(bridge_wsl, file_name))
 
-        # Eagle API用のWindowsパスを構築
-        win_path = r"C:\Users\munde\EagleBridge" + "\\" + file_name
+        # Eagle へ送信
+        tags = self.get_tags(params, gen_info)
+        folder_id = ""
+        if params["eagle_folder"]:
+            folder_id = self.eagle_api.find_or_create_folder(params["eagle_folder"])
 
-        # Eagleフォルダが指定されているならフォルダIDを取得
-        folder_id = self.eagle_api.find_or_create_folder(params["eagle_folder"])
-
-        # Eagleに送る情報を作成
+        # Windowsパスが取得できた場合のみ Eagle API を呼び出す
         item = {
-            "path": win_path,
+            "path": bridge_win.rstrip("\\") + "\\" + file_name if bridge_win else "",
             "name": file_name,
+            "tags": tags,
             "annotation": formated_info,
-            "tags": [],
         }
-
-        # タグを取得
-        item["tags"] = self.get_tags(params, gen_info)
-
         self.eagle_api.add_item_from_path(data=item, folder_id=folder_id)
 
-        return {
+        eagle_payload = {
+            "filename": file_name,
+            "subfolder": self.subfolder_name,
+            "type": self.type,
+            "tags": tags,
+            "annotation": formated_info,
+            "eagle_folder": params["eagle_folder"],
+        }
+
+        image_result = {
             "filename": file_name,
             "subfolder": self.subfolder_name,
             "type": self.type,
         }
+
+        return image_result, eagle_payload
 
     # ######################
     # 登録タグを取得

@@ -8,3 +8,7 @@ ksamplers:
   - "GenerateNAID"
 
 output_format: "{positive}\n\nNegative prompt:{negative}\nSteps: {steps}, Sampler: {sampler_name} {scheduler}, CFG scale: {cfg}, Seed: {seed}, Size: {width}x{height}, Model: {model_name}\n\nMemo: {memo}"
+
+# WSL→Eagle のブリッジディレクトリ (WSLパスで記述)
+# 空の場合は $USERPROFILE/EagleBridge を wslpath で自動変換して使用
+bridge_dir: ""

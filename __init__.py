@@ -7,8 +7,6 @@
 # from .send_eagle import SendEagle
 from .D2_SendEagle import D2_SendEagle
 
-WEB_DIRECTORY = "./web"
-
 NODE_CLASS_MAPPINGS = {
     "D2 Send Eagle": D2_SendEagle,
 }
@@ -18,4 +16,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

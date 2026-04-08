@@ -34,6 +34,7 @@ class TGenInfo(TypedDict):
 class TConfig(TypedDict):
     ksamplers: list
     output_format: str
+    bridge_dir: str
 
 
 @dataclass

@@ -1,8 +1,7 @@
 from typing import Optional, TypedDict, List
 import os
-import requests
 import subprocess
-import platform
+import requests
 
 
 class FolderInfo(TypedDict):
@@ -12,53 +11,43 @@ class FolderInfo(TypedDict):
 
 class EagleAPI:
     def __init__(self, base_url="http://127.0.0.1:41595"):
-        # トークンを先に設定（_check_connection 内で参照するため）
+        # トークンの初期化を最優先
         self.token = os.environ.get(
             "EAGLE_API_TOKEN", "14f17903-a9f9-480b-afb6-d010f2a45fa3"
         )
-
-        # WSL2環境の場合、localhostをWindowsホストのIPに変換を試みる
-        # ただし、ミラーモードの場合は 127.0.0.1 が有効なので、接続テストを行う
-        if base_url == "http://127.0.0.1:41595" and self._is_wsl():
-            if not self._check_connection("http://127.0.0.1:41595"):
-                host_ip = self._get_wsl_host_ip()
-                if host_ip:
-                    target_url = f"http://{host_ip}:41595"
-                    if self._check_connection(target_url):
-                        base_url = target_url
-
         self.base_url = base_url
         self.folder_list: Optional[List[FolderInfo]] = None
 
-    def _check_connection(self, url: str) -> bool:
+        # WSL環境の場合、デフォルトゲートウェイ(Windowsホスト)のIPを自動取得
+        if self._is_wsl():
+            try:
+                result = subprocess.run(
+                    ["ip", "route", "show", "default"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                if result.stdout:
+                    parts = result.stdout.split()
+                    if "via" in parts:
+                        wsl_ip = parts[parts.index("via") + 1]
+                        self.base_url = f"http://{wsl_ip}:41595"
+                        print(  # noqa: T201
+                            f"[Eagle API] WSL環境を検出: Windowsホスト {wsl_ip} を使用します"
+                        )
+            except Exception as e:
+                print(f"[Eagle API] WSLホストIPの取得に失敗しました: {e}")  # noqa: T201
+
+    # #########################################
+    # WSL環境かどうかを判定
+    @staticmethod
+    def _is_wsl() -> bool:
         try:
-            # Eagle APIの稼働確認 (タイムアウトを短めに設定)
-            response = requests.get(
-                f"{url}/api/application/info",
-                params={"token": self.token},
-                timeout=1.0,
-            )
-            return response.status_code == 200
-        except Exception:
+            with open("/proc/version", "r") as f:
+                content = f.read().lower()
+                return "microsoft" in content or "wsl" in content
+        except OSError:
             return False
-
-    def _is_wsl(self):
-        return (
-            "microsoft-standard" in platform.release().lower()
-            or "wsl" in platform.release().lower()
-        )
-
-    def _get_wsl_host_ip(self):
-        try:
-            # WSL2からWindowsホストのIPを取得する一般的な方法
-            result = subprocess.run(
-                ["sh", "-c", "ip route show | grep default | cut -d' ' -f3"],
-                capture_output=True,
-                text=True,
-            )
-            return result.stdout.strip()
-        except Exception:
-            return None
 
     # #########################################
     # 画像をEagleに送信
@@ -103,8 +92,6 @@ class EagleAPI:
             response = self._send_request(
                 "/api/folder/create", method="POST", data=data
             )
-            if response is None:
-                return ""
             new_folder_id = response.get("data", {}).get("id", "")
 
             # フォルダリストを更新
@@ -125,12 +112,22 @@ class EagleAPI:
     def _get_all_folder_list(self):
         try:
             result = self._send_request("/api/folder/list")
-            if result is None:
-                self.folder_list = []
-                return
             self.folder_list = self._extract_id_name_pairs(result["data"])
         except requests.RequestException:
             self.folder_list = []
+
+    # #########################################
+    # Eagle との接続確認
+    def _check_connection(self, url=None):
+        if url is None:
+            url = self.base_url
+        params = {"token": self.token} if hasattr(self, "token") and self.token else {}
+        response = requests.get(
+            f"{url}/api/application/info",
+            params=params,
+            timeout=1.0,
+        )
+        return response
 
     # #########################################
     # Private method for sending requests

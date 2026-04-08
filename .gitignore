@@ -160,3 +160,5 @@ cython_debug/
 #.idea/
 config.yaml
 wsl2fork.md
+eagel_token.ini
+eagle_improvement_plan.md

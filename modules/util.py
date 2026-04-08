@@ -3,9 +3,28 @@ import re
 import piexif
 import piexif.helper
 from datetime import datetime
+import subprocess
 
 
 class util:
+    # #########################
+    # WSLパスをWindowsパス形式に変換する
+    @staticmethod
+    def to_windows_path(wsl_path: str) -> str:
+        r"""WSLパス (例: /mnt/c/...) を Windowsパス (例: C:\...) に変換する。
+        wslpath コマンドが使用不可の場合は空文字を返す。
+        """
+        try:
+            result = subprocess.run(
+                ["wslpath", "-w", wsl_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return ""
+
     # @staticmethod
     # def initialize_defaults(prompt, extra_pnginfo):
     #     util.write_prompt(prompt, extra_pnginfo)
