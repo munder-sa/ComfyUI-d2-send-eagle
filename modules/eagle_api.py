@@ -10,9 +10,10 @@ class FolderInfo(TypedDict):
 
 
 class EagleAPI:
-    def __init__(self, base_url="http://127.0.0.1:41595"):
+    def __init__(self, base_url="http://127.0.0.1:41595", token: str = ""):
         # トークンの初期化を最優先
-        self.token = os.environ.get("EAGLE_API_TOKEN", "")
+        # 優先順位: 引数 token → 環境変数 EAGLE_API_TOKEN → 空文字列
+        self.token = token or os.environ.get("EAGLE_API_TOKEN", "")
         self._base_url_default = base_url
         self._base_url: Optional[str] = None  # 遅延評価用: None = 未解決
         self.folder_list: Optional[List[FolderInfo]] = None
@@ -83,6 +84,8 @@ class EagleAPI:
     # #########################################
     # 画像をEagleに送信
     def add_item_from_path(self, data, folder_id=None):
+        # folder_id が空文字の場合も None 扱いとし、folderId フィールドを除外する
+        # folder_id が有効な文字列の場合のみ folderId を設定
         if folder_id:
             data["folderId"] = folder_id
         return self._send_request("/api/item/addFromPath", method="POST", data=data)
@@ -153,7 +156,9 @@ class EagleAPI:
         url = self._resolve_base_url() + endpoint
         headers = {"Content-Type": "application/json"}
         params = {"token": self.token} if self.token else {}
-
+        print(f"DEBUG: URL={url}, TokenLength={len(self.token)}")  # noqa: T201
+        if data:
+            print(f"DEBUG: Payload={data}")  # noqa: T201
         try:
             if method == "GET":
                 response = requests.get(

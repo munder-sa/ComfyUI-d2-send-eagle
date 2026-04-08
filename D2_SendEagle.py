@@ -30,7 +30,9 @@ class D2_SendEagle:
     def _get_eagle_api(cls) -> EagleAPI:
         """EagleAPI シングルトンを取得"""
         if cls._eagle_api is None:
-            cls._eagle_api = EagleAPI()
+            config = cls._load_config()
+            token = config.get("eagle_api_token", "")
+            cls._eagle_api = EagleAPI(token=token)
         return cls._eagle_api
 
     def __init__(self):
@@ -42,7 +44,8 @@ class D2_SendEagle:
 
     # #########################
     # 設定ファイルを読み込む
-    def _load_config(self) -> TConfig:
+    @classmethod
+    def _load_config(cls) -> TConfig:
         """config.yaml または config.org.yaml を読み込む"""
         base_dir = Path(__file__).resolve().parent
         config_file = base_dir / "config.yaml"
@@ -53,7 +56,15 @@ class D2_SendEagle:
             shutil.copy2(config_org, config_file)
 
         with open(config_file, "r", encoding="utf-8") as file:
-            return yaml.safe_load(file)
+            config = yaml.safe_load(file)
+
+        # トークンのクリーンアップ（改行、スペース、引用符を除去）
+        if "eagle_api_token" in config and config["eagle_api_token"]:
+            config["eagle_api_token"] = (
+                str(config["eagle_api_token"]).strip().replace('"', "").replace("'", "")
+            )
+
+        return config
 
     # #########################
     # ブリッジディレクトリの (WSLパス, Windowsパス) を取得
@@ -76,9 +87,20 @@ class D2_SendEagle:
         # 2. config.yaml から取得
         config_bridge_dir = self.config.get("bridge_dir", "")
         if config_bridge_dir:
+            # /mnt/ で始まらない場合は Windows パスに変換できない可能性を警告
+            if not config_bridge_dir.startswith("/mnt/"):
+                print(  # noqa: T201
+                    f"[Eagle API] WARNING: bridge_dir={config_bridge_dir!r} は /mnt/c/ 等の"
+                    " WSL共有パスではありません。Windowsから参照できるパスを設定してください。"
+                )
             win_path = util.to_windows_path(config_bridge_dir)
             if win_path:
                 return config_bridge_dir, win_path
+            else:
+                print(  # noqa: T201
+                    f"[Eagle API] ERROR: bridge_dir={config_bridge_dir!r} を Windows パスに"
+                    " 変換できませんでした。config.yaml で /mnt/c/... 形式のパスを指定してください。"
+                )
 
         # 3. wslpath で $USERPROFILE/EagleBridge を自動変換
         try:
@@ -100,6 +122,11 @@ class D2_SendEagle:
             pass
 
         # 4. フォールバック
+        print(  # noqa: T201
+            "[Eagle API] ERROR: Windows パスが解決できませんでした。"
+            " config.yaml の bridge_dir に /mnt/c/Users/.../EagleBridge 等の"
+            " WSL共有パスを指定してください。"
+        )
         return "/tmp/EagleBridge", ""
 
     @classmethod
@@ -288,10 +315,20 @@ class D2_SendEagle:
 
         # Eagle へ送信
         tags = self.get_tags(params, gen_info)
-        folder_id = ""
+        folder_id = None
         if params["eagle_folder"]:
-            folder_id = self._get_eagle_api().find_or_create_folder(
+            result_id = self._get_eagle_api().find_or_create_folder(
                 params["eagle_folder"]
+            )
+            folder_id = result_id if result_id else None
+
+        # folder_id の検証
+        print(  # noqa: T201
+            f"DEBUG: eagle_folder={params['eagle_folder']!r}, folder_id={folder_id!r}"
+        )
+        if params["eagle_folder"] and not folder_id:
+            print(  # noqa: T201
+                "[Eagle API] WARNING: folder_id が空です。フォルダが見つからないか作成に失敗した可能性があります"
             )
 
         # Windowsパスが取得できた場合のみ Eagle API を呼び出す
@@ -301,7 +338,25 @@ class D2_SendEagle:
             "tags": tags,
             "annotation": formated_info,
         }
-        self._get_eagle_api().add_item_from_path(data=item, folder_id=folder_id)
+
+        # item["path"] のパス検証
+        print(f"DEBUG: bridge_wsl={bridge_wsl!r}, bridge_win={bridge_win!r}")  # noqa: T201
+        print(f"DEBUG: item path={item['path']!r}")  # noqa: T201
+
+        # 送信前バリデーション: 空パス or /mnt/ パス（Windows変換失敗）は送信中止
+        if not item["path"]:
+            print(  # noqa: T201
+                "[Eagle API] ERROR: item path が空です。Eagle へのリクエストを中止します。"
+                " config.yaml の bridge_dir に /mnt/c/... 形式のパスを指定してください。"
+            )
+        elif item["path"].startswith("/mnt/"):
+            print(  # noqa: T201
+                f"[Eagle API] ERROR: item path={item['path']!r} が Windows パスに変換されていません。"
+                " Eagle へのリクエストを中止します。"
+                " config.yaml の bridge_dir に /mnt/c/... 形式のパスを指定してください。"
+            )
+        else:
+            self._get_eagle_api().add_item_from_path(data=item, folder_id=folder_id)
 
         eagle_payload = {
             "filename": file_name,

@@ -12,3 +12,4 @@ output_format: "{positive}\n\nNegative prompt:{negative}\nSteps: {steps}, Sample
 # WSL→Eagle のブリッジディレクトリ (WSLパスで記述)
 # 空の場合は $USERPROFILE/EagleBridge を wslpath で自動変換して使用
 bridge_dir: ""
+eagle_api_token: "14f17903-a9f9-480b-afb6-d010f2a45fa3"
