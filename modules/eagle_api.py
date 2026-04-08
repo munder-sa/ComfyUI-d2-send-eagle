@@ -12,9 +12,7 @@ class FolderInfo(TypedDict):
 class EagleAPI:
     def __init__(self, base_url="http://127.0.0.1:41595"):
         # トークンの初期化を最優先
-        self.token = os.environ.get(
-            "EAGLE_API_TOKEN", "14f17903-a9f9-480b-afb6-d010f2a45fa3"
-        )
+        self.token = os.environ.get("EAGLE_API_TOKEN", "")
         self._base_url_default = base_url
         self._base_url: Optional[str] = None  # 遅延評価用: None = 未解決
         self.folder_list: Optional[List[FolderInfo]] = None
