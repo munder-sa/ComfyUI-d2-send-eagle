@@ -44,7 +44,32 @@ class EagleAPI:
                             )
                 except Exception as e:
                     print(f"[Eagle API] WSLホストIPの取得に失敗しました: {e}")  # noqa: T201
+                    # フォールバック: /etc/resolv.conf から nameserver を取得
+                    self._base_url = (
+                        self._get_ip_from_resolv_conf() or self._base_url_default
+                    )
         return self._base_url
+
+    # #########################################
+    # /etc/resolv.conf から nameserver を抽出してIPを取得
+    def _get_ip_from_resolv_conf(self) -> Optional[str]:
+        """resolv.conf の nameserver から IP を抽出"""
+        try:
+            with open("/etc/resolv.conf", "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("nameserver"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            ip = parts[1]
+                            self_base_url = f"http://{ip}:41595"
+                            print(  # noqa: T201
+                                f"[Eagle API] /etc/resolv.conf から nameserver {ip} を使用します"
+                            )
+                            return self_base_url
+        except Exception as e:
+            print(f"[Eagle API] /etc/resolv.conf の読み込みに失敗しました: {e}")  # noqa: T201
+        return None
 
     # #########################################
     # WSL環境かどうかを判定
@@ -123,19 +148,6 @@ class EagleAPI:
             self.folder_list = self._extract_id_name_pairs(result["data"])
         except requests.RequestException:
             self.folder_list = []
-
-    # #########################################
-    # Eagle との接続確認
-    def _check_connection(self, url=None):
-        if url is None:
-            url = self._resolve_base_url()
-        params = {"token": self.token} if hasattr(self, "token") and self.token else {}
-        response = requests.get(
-            f"{url}/api/application/info",
-            params=params,
-            timeout=5.0,
-        )
-        return response
 
     # #########################################
     # Private method for sending requests
