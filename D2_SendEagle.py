@@ -23,12 +23,21 @@ FORCE_WRITE_PROMPT = False
 
 
 class D2_SendEagle:
+    # クラス変数として EagleAPI を保持（全インスタンスで共有）
+    _eagle_api: Optional[EagleAPI] = None
+
+    @classmethod
+    def _get_eagle_api(cls) -> EagleAPI:
+        """EagleAPI シングルトンを取得"""
+        if cls._eagle_api is None:
+            cls._eagle_api = EagleAPI()
+        return cls._eagle_api
+
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
         self.type = "output"
         self.output_folder = ""
         self.subfolder_name = ""
-        self.eagle_api = EagleAPI()
         self.config = self._load_config()
 
     # #########################
@@ -281,7 +290,9 @@ class D2_SendEagle:
         tags = self.get_tags(params, gen_info)
         folder_id = ""
         if params["eagle_folder"]:
-            folder_id = self.eagle_api.find_or_create_folder(params["eagle_folder"])
+            folder_id = self._get_eagle_api().find_or_create_folder(
+                params["eagle_folder"]
+            )
 
         # Windowsパスが取得できた場合のみ Eagle API を呼び出す
         item = {
@@ -290,7 +301,7 @@ class D2_SendEagle:
             "tags": tags,
             "annotation": formated_info,
         }
-        self.eagle_api.add_item_from_path(data=item, folder_id=folder_id)
+        self._get_eagle_api().add_item_from_path(data=item, folder_id=folder_id)
 
         eagle_payload = {
             "filename": file_name,

@@ -15,28 +15,36 @@ class EagleAPI:
         self.token = os.environ.get(
             "EAGLE_API_TOKEN", "14f17903-a9f9-480b-afb6-d010f2a45fa3"
         )
-        self.base_url = base_url
+        self._base_url_default = base_url
+        self._base_url: Optional[str] = None  # 遅延評価用: None = 未解決
         self.folder_list: Optional[List[FolderInfo]] = None
 
-        # WSL環境の場合、デフォルトゲートウェイ(Windowsホスト)のIPを自動取得
-        if self._is_wsl():
-            try:
-                result = subprocess.run(
-                    ["ip", "route", "show", "default"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                if result.stdout:
-                    parts = result.stdout.split()
-                    if "via" in parts:
-                        wsl_ip = parts[parts.index("via") + 1]
-                        self.base_url = f"http://{wsl_ip}:41595"
-                        print(  # noqa: T201
-                            f"[Eagle API] WSL環境を検出: Windowsホスト {wsl_ip} を使用します"
-                        )
-            except Exception as e:
-                print(f"[Eagle API] WSLホストIPの取得に失敗しました: {e}")  # noqa: T201
+    # #########################################
+    # base_url を遅延評価で解決する
+    def _resolve_base_url(self) -> str:
+        """初回呼び出し時のみ WSL IP を解決してキャッシュする"""
+        if self._base_url is None:
+            self._base_url = self._base_url_default
+            # WSL環境の場合、デフォルトゲートウェイ(Windowsホスト)のIPを自動取得
+            if self._is_wsl():
+                try:
+                    result = subprocess.run(
+                        ["ip", "route", "show", "default"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    if result.stdout:
+                        parts = result.stdout.split()
+                        if "via" in parts:
+                            wsl_ip = parts[parts.index("via") + 1]
+                            self._base_url = f"http://{wsl_ip}:41595"
+                            print(  # noqa: T201
+                                f"[Eagle API] WSL環境を検出: Windowsホスト {wsl_ip} を使用します"
+                            )
+                except Exception as e:
+                    print(f"[Eagle API] WSLホストIPの取得に失敗しました: {e}")  # noqa: T201
+        return self._base_url
 
     # #########################################
     # WSL環境かどうかを判定
@@ -120,27 +128,31 @@ class EagleAPI:
     # Eagle との接続確認
     def _check_connection(self, url=None):
         if url is None:
-            url = self.base_url
+            url = self._resolve_base_url()
         params = {"token": self.token} if hasattr(self, "token") and self.token else {}
         response = requests.get(
             f"{url}/api/application/info",
             params=params,
-            timeout=1.0,
+            timeout=5.0,
         )
         return response
 
     # #########################################
     # Private method for sending requests
     def _send_request(self, endpoint, method="GET", data=None):
-        url = self.base_url + endpoint
+        url = self._resolve_base_url() + endpoint
         headers = {"Content-Type": "application/json"}
         params = {"token": self.token} if self.token else {}
 
         try:
             if method == "GET":
-                response = requests.get(url, headers=headers, params=params)
+                response = requests.get(
+                    url, headers=headers, params=params, timeout=5.0
+                )
             elif method == "POST":
-                response = requests.post(url, headers=headers, json=data, params=params)
+                response = requests.post(
+                    url, headers=headers, json=data, params=params, timeout=5.0
+                )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
